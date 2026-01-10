@@ -9,8 +9,6 @@ library(ggplot2)
 library(xtable)
 library(car)
 library(ggpubr)
-# library(qqplotr)
-# library(latex2exp)
 library(astsa)
 
 library(TSAOP)
@@ -190,275 +188,47 @@ dev.off()
 
 
 
+par = ParEst2
+
+Xl=X_hour
+Xw=X_hour_wide
+DesignX=DesignXEst2
 
 
+Ts = length(Xl)
+K = NCOL(Xw)
 
+num_par = length(par)
 
+seg = c(-Inf, 0, par[1:(K-2)], Inf)
+theta = par[(K-1):(num_par-1)]
+rho = par[num_par]
 
+# mean vector
+mst = DesignX%*%theta
+CondEX = matrix(0, nrow=Ts, ncol=K)
 
+# t = 1 (using marginal expectation)
+tmpprob = pnorm(seg[2:(K+1)]-mst[1]) - pnorm(seg[1:K]-mst[1])
+CondEX[1,] = tmpprob
 
-
-
-
-
-
-
-
-
-# ---------- helpers ----------
-
-# PSD-safe inverse (uses Cholesky; tiny jitter fallback)
-solve_psd <- function(M) {
-  M <- (M + t(M)) / 2
-  p <- nrow(M)
-  tryCatch(chol2inv(chol(M)),
-           error = function(e) solve(M + 1e-10 * diag(p)))
-}
-
-# Project each row onto the probability simplex {x>=0, sum x = 1}
-.project_simplex_row <- function(v) {
-  u <- sort(v, decreasing = TRUE)
-  sv <- cumsum(u)
-  rho <- max(which(u > (sv - 1) / seq_along(u)))
-  theta <- (sv[rho] - 1) / rho
-  pmax(v - theta, 0)
-}
-project_rows_to_simplex <- function(M) t(apply(M, 1L, .project_simplex_row))
-
-# ---------- multikappa: cov(w_i, w_j) block for K-1 working cats ----------
-
-multikappa <- function(i, j, msti, mstj, EXwi, EXwj, seg, rho) {
-  # seg: cutpoints (-Inf, c1, c2, ..., c_{K-1}, Inf)
-  # EXwi/EXwj: length K-1 vectors of category probs at times i,j (excluding last cat)
-  K  <- length(seg) - 1L
-  out <- matrix(NA_real_, nrow = K-1L, ncol = K-1L)
-  
-  if (i == j) {
-    # same time: Cov(1{Y=k},1{Y=k'}) = diag(p) - p p^T, take (K-1)x(K-1) block
-    out <- - EXwi %*% t(EXwi)
-    diag(out) <- diag(out) + EXwi
-    return(out)
+# t > 2 (using conditonal expectation with lag=1)
+corr_nom = rho^abs(matrix(1:2 - 1, nrow = 2, ncol = 2, byrow = TRUE) - (1:2 - 1))
+diag(corr_nom) = 1
+for(t in 2:Ts){
+  prevX = Xl[t-1]
+  denom = pnorm(seg[prevX+1]-mst[t-1]) - pnorm(seg[prevX]-mst[t-1])
+  mu_nom = mst[t:(t-1)]
+  for(k in 1:K){
+    a_nom = seg[c(k, prevX)]
+    b_nom = seg[c(k, prevX)+1]
+    nom = pmvnorm(lower=a_nom, upper=b_nom, mean=mu_nom, corr=corr_nom)
+    CondEX[t,k] = nom/denom
   }
-  
-  # different times: latent bivar normal with corr = rho^|i-j|
-  lag  <- abs(i - j)
-  r    <- rho^lag
-  Sigma <- matrix(c(1, r, r, 1), 2, 2)   # correlation matrix
-  meanvec <- c(msti, mstj)
-  
-  for (k in 1:(K-1L)) for (kp in 1:(K-1L)) {
-    lower <- c(seg[k],    seg[kp])
-    upper <- c(seg[k+1L], seg[kp+1L])
-    pij <- mvtnorm::pmvnorm(lower = lower, upper = upper,
-                            mean = meanvec, corr = Sigma,
-                            algorithm = mvtnorm::GenzBretz(abseps = 1e-8, maxpts = 1e5))
-    out[k, kp] <- as.numeric(pij)
-  }
-  out - EXwi %*% t(EXwj)
 }
 
-# ---------- Innovations (truncated) ----------
+resid = Xw - CondEX
 
-multiInnov <- function(mst, EXW, seg, rho, num_coef = NULL, mytol = 1e-6, mylag = 0) {
-  # mst: mean of latent Z_t (length Ts)
-  # EXW: Ts x (K-1) probs (excluding last category)
-  Ts <- length(mst)
-  K  <- length(seg) - 1L
-  if (is.null(num_coef)) num_coef <- Ts
-  
-  V  <- vector(mode = "list", length = Ts)
-  HQ <- array(NA_real_, c(Ts, num_coef, K-1L, K-1L))  # Θ coefficients
-  
-  # t=1 (index 1)
-  V[[1]] <- multikappa(1, 1, mst[1], mst[1], EXW[1, ], EXW[1, ], seg, rho)
-  
-  # t=2 (index 2)
-  HQ[1, 1, , ] <- multikappa(2, 1, mst[2], mst[1], EXW[2, ], EXW[1, ], seg, rho) %*% solve_psd(V[[1]])
-  tmp <- HQ[1, 1, , ] %*% V[[1]] %*% t(HQ[1, 1, , ])
-  V[[2]] <- multikappa(2, 2, mst[2], mst[2], EXW[2, ], EXW[2, ], seg, rho) - tmp
-  
-  # t >= 3
-  tmpcheck <- matrix(100, nrow = K-1L, ncol = K-1L)
-  for (t in 2:(Ts-1)) {
-    if (any(tmpcheck > mytol) && mylag == 0) {
-      # k = 0
-      HQ[t, t, , ] <- multikappa(t+1, 1, mst[t+1], mst[1], EXW[t+1, ], EXW[1, ], seg, rho) %*% solve_psd(V[[1]])
-      # k > 0
-      for (k in 1:(t-1)) {
-        tmp <- matrix(0, K-1L, K-1L)
-        for (j in 0:(k-1)) {
-          tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[k, k-j, , ])
-        }
-        HQ[t, t-k, , ] <- (multikappa(t+1, k+1, mst[t+1], mst[k+1], EXW[t+1, ], EXW[k+1, ], seg, rho) - tmp) %*% solve_psd(V[[k+1]])
-      }
-      # Prediction MSE
-      tmp <- matrix(0, K-1L, K-1L)
-      for (j in 0:(t-1)) {
-        tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[t, t-j, , ])
-      }
-      V[[t+1]] <- multikappa(t+1, t+1, mst[t+1], mst[t+1], EXW[t+1, ], EXW[t+1, ], seg, rho) - tmp
-      
-      tmpcheck <- abs(HQ[t-1, t-1, , ])
-      if (all(abs(HQ[t, t, , ]) < mytol)) {
-        mylag <- t
-        HQ <- HQ[, 1:mylag, , , drop = FALSE]
-      }
-    } else {
-      if (t <= mylag) {
-        # k = 0
-        HQ[t, t, , ] <- multikappa(t+1, 1, mst[t+1], mst[1], EXW[t+1, ], EXW[1, ], seg, rho) %*% solve_psd(V[[1]])
-        # k > 0
-        for (k in 1:(t-1)) {
-          tmp <- matrix(0, K-1L, K-1L)
-          for (j in 0:(k-1)) {
-            tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[k, k-j, , ])
-          }
-          HQ[t, t-k, , ] <- (multikappa(t+1, k+1, mst[t+1], mst[k+1], EXW[t+1, ], EXW[k+1, ], seg, rho) - tmp) %*% solve_psd(V[[k+1]])
-        }
-        tmp <- matrix(0, K-1L, K-1L)
-        for (j in 0:(t-1)) {
-          tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[t, t-j, , ])
-        }
-        V[[t+1]] <- multikappa(t+1, t+1, mst[t+1], mst[t+1], EXW[t+1, ], EXW[t+1, ], seg, rho) - tmp
-        tmpcheck <- abs(HQ[t-1, t-1, , ])
-      } else {
-        # only effective lags
-        for (k in (t-mylag):(t-1)) {
-          tmp <- matrix(0, K-1L, K-1L)
-          for (j in max(k-mylag, 0):(k-1)) {
-            if ((t-j) < mylag) {
-              tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[k, k-j, , ])
-            }
-          }
-          HQ[t, t-k, , ] <- (multikappa(t+1, k+1, mst[t+1], mst[k+1], EXW[t+1, ], EXW[k+1, ], seg, rho) - tmp) %*% solve_psd(V[[k+1]])
-        }
-        tmp <- matrix(0, K-1L, K-1L)
-        for (j in (t-mylag):(t-1)) {
-          if ((t-j) < mylag) {
-            tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[t, t-j, , ])
-          }
-        }
-        V[[t+1]] <- multikappa(t+1, t+1, mst[t+1], mst[t+1], EXW[t+1, ], EXW[t+1, ], seg, rho) - tmp
-        tmpcheck <- abs(HQ[t-1, mylag, , ])
-      }
-    }
-  }
-  list(HQ = HQ, V = V, mylag = mylag)
-}
-
-# ---------- Innovations (exact, all lags) ----------
-
-multiInnovALL <- function(mst, EXW, seg, rho) {
-  Ts <- length(mst)
-  K  <- length(seg) - 1L
-  
-  V  <- vector(mode = "list", length = Ts)
-  HQ <- array(NA_real_, c(Ts, Ts, K-1L, K-1L))
-  
-  # t=1
-  V[[1]] <- multikappa(1, 1, mst[1], mst[1], EXW[1, ], EXW[1, ], seg, rho)
-  
-  # t=2
-  HQ[1, 1, , ] <- multikappa(2, 1, mst[2], mst[1], EXW[2, ], EXW[1, ], seg, rho) %*% solve_psd(V[[1]])
-  tmp <- HQ[1, 1, , ] %*% V[[1]] %*% t(HQ[1, 1, , ])
-  V[[2]] <- multikappa(2, 2, mst[2], mst[2], EXW[2, ], EXW[2, ], seg, rho) - tmp
-  
-  # t>=3
-  for (t in 2:(Ts-1)) {
-    HQ[t, t, , ] <- multikappa(t+1, 1, mst[t+1], mst[1], EXW[t+1, ], EXW[1, ], seg, rho) %*% solve_psd(V[[1]])
-    for (k in 1:(t-1)) {
-      tmp <- matrix(0, K-1L, K-1L)
-      for (j in 0:(k-1)) {
-        tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[k, k-j, , ])
-      }
-      HQ[t, t-k, , ] <- (multikappa(t+1, k+1, mst[t+1], mst[k+1], EXW[t+1, ], EXW[k+1, ], seg, rho) - tmp) %*% solve_psd(V[[k+1]])
-    }
-    tmp <- matrix(0, K-1L, K-1L)
-    for (j in 0:(t-1)) {
-      tmp <- tmp + HQ[t, t-j, , ] %*% V[[j+1]] %*% t(HQ[t, t-j, , ])
-    }
-    V[[t+1]] <- multikappa(t+1, t+1, mst[t+1], mst[t+1], EXW[t+1, ], EXW[t+1, ], seg, rho) - tmp
-  }
-  list(HQ = HQ, V = V, mylag = 0L)
-}
-
-# ---------- One-step prediction & innovations (K-1 working cats) ----------
-
-MultiOneStepPred <- function(EXW, XwKminus1, mylag, HQ) {
-  Ts  <- nrow(EXW)
-  Err <- XwKminus1 - EXW   # error in probs (K-1 columns)
-  
-  PredErr <- matrix(0, Ts, ncol(Err))
-  for (t in 1:(Ts-1)) {
-    predlag <- if (mylag > 0) min(mylag, t) else t
-    for (j in 1:predlag) {
-      PredErr[t+1, ] <- PredErr[t+1, ] + (HQ[t, j, , ] %*% (Err[t+1-j, ] - PredErr[t+1-j, ]))
-    }
-  }
-  
-  ErrErr <- Err - PredErr            # innovations (K-1)
-  PredX  <- PredErr + EXW            # one-step-ahead predicted probs (K-1)
-  list(ErrErr = ErrErr, PredX = PredX)
-}
-
-# ---------- Top-level: run innovations and return predictions & residuals ----------
-
-ResWInnov <- function(par, Xl, Xw, DesignX, UseAllLag = FALSE, num_coef = NULL, mylag = 0) {
-  Ts <- length(Xl)
-  K  <- nlevels(factor(Xl))
-  num_par <- length(par)
-  
-  # thresholds
-  ci  <- c(0, par[1:(K-2)])
-  seg <- c(-Inf, ci, Inf)
-  
-  # regression + ar
-  theta <- par[(K-1):(num_par-1)]
-  rho   <- par[num_par]
-  
-  # latent means
-  mst <- as.vector(DesignX %*% theta)
-  
-  # conditional category probs (K-1 working cats)
-  tmp <- t(matrix(rep(seg, Ts), nrow = length(seg), ncol = Ts)) -
-    matrix(rep(mst, length(seg)), nrow = Ts)
-  EXW <- pnorm(tmp[, 2:(K+1)]) - pnorm(tmp[, 1:K])
-  EXW <- EXW[, 1:(K-1), drop = FALSE]
-  
-  # innovations recursion
-  if (UseAllLag) {
-    inv <- multiInnovALL(mst = mst, EXW = EXW, seg = seg, rho = rho)
-  } else {
-    inv <- multiInnov(mst = mst, EXW = EXW, seg = seg, rho = rho,
-                      num_coef = num_coef, mytol = 1e-6, mylag = mylag)
-  }
-  HQ <- inv$HQ; mylag <- inv$mylag; V <- inv$V
-  
-  # one-step prediction for probs of first K-1 cats
-  predK1 <- MultiOneStepPred(EXW, Xw[, 1:(K-1), drop = FALSE], mylag, HQ)
-  
-  # append last category, then project to valid simplex
-  Predw <- cbind(predK1$PredX, 1 - rowSums(predK1$PredX))
-  Predw <- project_rows_to_simplex(Predw)   # keep everything in [0,1] & rowsum=1
-  
-  list(
-    Predw      = Predw,             # Ts x K, one-step-ahead predicted probs
-    residw     = Xw - Predw,        # Ts x K, residuals (indicators - predicted probs)
-    innovation = predK1$ErrErr,     # Ts x (K-1), innovations (working block)
-    HQ         = HQ,
-    V          = V,
-    mylag      = mylag
-  )
-}
-
-RR <- ResWInnov(par = ParEst2, Xl = X_hour, Xw = X_hour_wide, DesignX = DesignXEst2)
-dim(RR$Predw)       # Ts x K
-dim(RR$residw)      # Ts x K
-dim(RR$innovation)  # Ts x (K-1)
-
-range(RR$Predw)           # now in [0,1]
-summary(rowSums(RR$Predw))# exactly 1 for each row
-colMeans(RR$innovation)   # ≈ 0 (ignore first few transients)
 
 
 setEPS()
@@ -469,7 +239,7 @@ par(mfrow=c(2,2),
     mar = c(5.5, 6, 3.5, 6),
     cex.main=1.7, cex.lab=1.7, cex.axis=1.7)
 for(k in 1:K){
-  acf(RR$residw[,k], 
+  acf(resid[,k], 
       main = paste0("One-step-ahead probability residuals for category ", k),
       ylab = 'Sample ACF')
 }
@@ -545,7 +315,7 @@ pit_diag <- function(pred, y, H = 20,
   axis(1, at = at,
        labels = format(x_breaks, nsmall = x_digits),
        cex.axis = x_cex, las = x_las, tck = -0.015)
-  mtext(xlab, side = 1, line = 2.6, cex = 1.7)
+  mtext(xlab, side = 1, line = 2.8, cex = 1.7)
   
   invisible(list(relfreq = counts, H = H, n = Ti, p0 = p0, se = se,
                  breaks_pos = at))
@@ -553,10 +323,11 @@ pit_diag <- function(pred, y, H = 20,
 
 
 
-pit_diag(RR$Predw, X_hour, H = 50, left_margin = 6.5,
+pit_diag(CondEX, X_hour, H = 50, left_margin = 6.5,
          method = "expected",
          main = "PIT histograms",
          xlab = "Probability Integral Transform (U)", 
          x_breaks = seq(from=0, to=1, by=0.1))
 
 dev.off()
+
