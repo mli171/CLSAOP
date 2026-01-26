@@ -111,12 +111,33 @@ ParEst1.se <- FitRes1$se
 ParEst2.se <- FitRes2$se
 
 round(ParEst1.se, 4)
+# [1] 0.0443 0.0624 0.1142 0.0445 0.0455 0.0452 0.0453 0.0279
 round(ParEst2.se, 4)
+# [1] 0.0440 0.0711 0.2074 0.0446 0.0455 0.0452 0.0455 0.1234 0.0280
 
 round(cbind(ParEst1, ParEst1-1.96*ParEst1.se, ParEst1+1.96*ParEst1.se), 4)
+# ParEst1                
+# [1,]  0.8119  0.7252  0.8987
+# [2,] -0.8200 -0.9424 -0.6976
+# [3,] -0.2832 -0.5071 -0.0593
+# [4,] -0.1782 -0.2655 -0.0910
+# [5,] -0.1605 -0.2498 -0.0713
+# [6,]  0.0760 -0.0127  0.1647
+# [7,]  0.1619  0.0730  0.2507
+# [8,]  0.4171  0.3625  0.4717
+
 round(cbind(ParEst2, ParEst2-1.96*ParEst2.se, ParEst2+1.96*ParEst2.se), 4)
 
-
+# ParEst2                
+# [1,]  0.8115  0.7252  0.8978
+# [2,] -0.7277 -0.8670 -0.5884
+# [3,] -0.7266 -1.1332 -0.3201
+# [4,] -0.1791 -0.2665 -0.0917
+# [5,] -0.1569 -0.2461 -0.0677
+# [6,]  0.0713 -0.0173  0.1600
+# [7,]  0.1554  0.0662  0.2446
+# [8,]  0.3115  0.0696  0.5534
+# [9,]  0.4134  0.3586  0.4683
 
 
 
@@ -149,8 +170,41 @@ for(t in 1:Ts){EXL2[t] <- K - sum(pnorm(seg_est2-mst2[t])[2:K])}
 #-------------- Application Figure 1  -----------# Time Series with Expected value as mean structure
 ##################################################
 
+# setEPS()
+# postscript("grad_app/application/abqrainfall/ApplyFigure1.eps", width = 10, height = 6)
+# 
+# par(cex.lab=1.2, cex.axis=1.2, mfrow=c(1,1))
+# plot(x=1:Ts, y=X_hour, type="l", col="darkgrey",
+#      xlab="Year", ylab="Categorized Rainfall",
+#      xaxt="n", yaxt="n", 
+#      xlim=c(-100, Ts+100), ylim=c(1,K+0.2), xaxs="i")
+# tmp <- 1990:2001
+# px <- rep(0, length(tmp))
+# for(i in 1:length(tmp)){
+#   px[i] <- which(as.numeric(format(mydat$DATE, "%Y")) == tmp[i])[1]
+# }
+# axis(1, at = px, labels = tmp, las = 1)
+# axis(2, at = c(1:K))
+# 
+# lines(1:Ts, EXL1, type="l", lty="solid", col="orange", lwd=2)
+# lines(1:(CpLocY-1), EXL2[1:(CpLocY-1)], type="l", lty="solid", col="blue", lwd=2)
+# lines(CpLocY:Ts, EXL2[CpLocY:Ts], type="l", lty="dashed", col="red", lwd=2)
+# legend(
+#   x = 500, y=3.25, 
+#   legend = c("Without changepoint","Before changepoint","After changepoint"),
+#   col = c("orange","blue","red"),
+#   lty = c("solid","solid","dashed"),
+#   lwd = 2,
+#   bty = "n",
+#   horiz = TRUE,
+#   # x.intersp = 0.3,   # tighter gap between line and text (default ~1)
+#   seg.len   = 2.5,   # shorter legend lines
+#   # inset     = 0.01
+# )
+# dev.off()
+
 setEPS()
-postscript("grad_app/application/abqrainfall/ApplyFigure1.eps", width = 10, height = 6)
+postscript("grad_app/application/abqrainfall/ApplyFigure1_new.eps", width = 10, height = 6)
 
 par(cex.lab=1.2, cex.axis=1.2, mfrow=c(1,1))
 plot(x=1:Ts, y=X_hour, type="l", col="darkgrey",
@@ -165,14 +219,14 @@ for(i in 1:length(tmp)){
 axis(1, at = px, labels = tmp, las = 1)
 axis(2, at = c(1:K))
 
-lines(1:Ts, EXL1, type="l", lty="solid", col="orange", lwd=2)
+# lines(1:Ts, EXL1, type="l", lty="solid", col="orange", lwd=2)
 lines(1:(CpLocY-1), EXL2[1:(CpLocY-1)], type="l", lty="solid", col="blue", lwd=2)
 lines(CpLocY:Ts, EXL2[CpLocY:Ts], type="l", lty="dashed", col="red", lwd=2)
 legend(
-  x = 500, y=3.25, 
-  legend = c("Without changepoint","Before changepoint","After changepoint"),
-  col = c("orange","blue","red"),
-  lty = c("solid","solid","dashed"),
+  x = 1100, y=3.25, 
+  legend = c("Before changepoint","After changepoint"),
+  col = c("blue","red"),
+  lty = c("solid","dashed"),
   lwd = 2,
   bty = "n",
   horiz = TRUE,
@@ -181,8 +235,6 @@ legend(
   # inset     = 0.01
 )
 dev.off()
-
-
 
 
 
