@@ -175,19 +175,3 @@ if (nrow(RES0) > 0) {
 }
 
 print(round(EstTable, 4))
-
-
-save(
-  RES,
-  RES0,
-  EstTable,
-  file = paste0(
-    "~/Desktop/Changepoint/aop/AMOCAOP/CLS/revision/ar2/",
-    "CLSE_AR2_Innovation_T", Ts,
-    "_nSim", nSim,
-    "_lag", lag_max_fit,
-    "_phi1_", phi1T,
-    "_phi2_", phi2T,
-    ".RData"
-  )
-)
