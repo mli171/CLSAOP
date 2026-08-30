@@ -557,14 +557,15 @@ setEPS()
 postscript("~/Desktop/Changepoint/aop/AMOCAOP/CLS/revision/applications/RainfallFigFitline_innov.eps",
            width = 16, height = 8)
 
-par(cex.lab = 1.45,
-    cex.axis = 1.45,
+par(cex.lab = 2,
+    cex.axis = 2,
+    mar = c(5, 5, 4, 0.5),
     mfrow = c(1, 1))
 
 plot(range(df_all$date), c(1, K + 0.5),
      type = "n",
      xlab = "Year",
-     ylab = "Categorized rainfall / score",
+     ylab = "Categorized rainfall",
      xaxt = "n",
      yaxt = "n",
      xaxs = "i")
@@ -595,8 +596,8 @@ abline(v = min(df_fut$date),
 
 legend(
   "topleft",
-  legend = c("Fitted categorical score",
-             "Rolling one-step-ahead forecast categorical score"),
+  legend = c("Average fitted categorical response",
+             "Rolling one-step-ahead forecast rainfall categories"),
   col = c("blue", "red4"),
   lty = c("solid", "solid"),
   lwd = c(1.5, 1.5),
